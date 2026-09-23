@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import torch
-from diffusers import AutoPipelineForText2Image
+from diffusers import StableDiffusionPipeline
 
-DEFAULT_MODEL_ID = "runwayml/stable-diffusion-v1-5"
 MODEL_DIR = Path(r"D:\Ai_models\SD15")
+DEFAULT_MODEL_ID = "runwayml/stable-diffusion-v1-5"
 DEFAULT_STEPS = 30
 DEFAULT_GUIDANCE = 7.0
 
@@ -15,24 +15,13 @@ class ImageGenerator:
         self.model_id = model_id
         self.model_source = self._resolve_model_source(model_id)
 
-        if self.device == "cuda":
-            dtype = torch.float16
-        else:
-            dtype = torch.float32
+        dtype = torch.float16 if self.device == "cuda" else torch.float32
 
-        load_kwargs = {
-            "torch_dtype": dtype,
-            "use_safetensors": True,
-        }
-
-        if self.model_source == model_id:
-            load_kwargs["cache_dir"] = str(MODEL_DIR)
-        elif self._has_variant_files(MODEL_DIR):
-            load_kwargs["variant"] = "fp16"
-
-        self.pipe = AutoPipelineForText2Image.from_pretrained(
+        self.pipe = StableDiffusionPipeline.from_pretrained(
             self.model_source,
-            **load_kwargs,
+            torch_dtype=dtype,
+            use_safetensors=True,
+            safety_checker=None,
         )
 
         self._configure_memory()
@@ -48,12 +37,10 @@ class ImageGenerator:
 
         return model_id
 
-    @staticmethod
-    def _has_variant_files(path):
-        return any(path.glob("*fp16*"))
-
     def _configure_memory(self):
         if self.device == "cuda":
+            self.pipe.enable_attention_slicing()
+
             if hasattr(self.pipe, "enable_vae_slicing"):
                 self.pipe.enable_vae_slicing()
 
@@ -67,13 +54,15 @@ class ImageGenerator:
         else:
             self.pipe = self.pipe.to("cpu")
 
+        self.pipe.set_progress_bar_config(disable=True)
+
     @torch.inference_mode()
     def generate(
         self,
         prompt,
         negative_prompt=None,
-        width=1024,
-        height=1024,
+        width=512,
+        height=512,
         steps=DEFAULT_STEPS,
         guidance_scale=DEFAULT_GUIDANCE,
         seed=None,
@@ -93,7 +82,7 @@ class ImageGenerator:
 
         result = self.pipe(
             prompt=prompt.strip(),
-            negative_prompt=(negative_prompt.strip() if negative_prompt else None),
+            negative_prompt=negative_prompt.strip() if negative_prompt else None,
             width=width,
             height=height,
             num_inference_steps=steps,
