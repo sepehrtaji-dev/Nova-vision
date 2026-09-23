@@ -1,0 +1,23 @@
+services:
+  image-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: nova-image-ai
+
+    runtime: nvidia
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - MODEL_DIR=/models/SD15
+
+    volumes:
+      - D:/Ai_models/SD15:/models/SD15
+      - ./outputs:/app/outputs
+
+    ports:
+      - "7860:7860"
+
+    restart: unless-stopped
