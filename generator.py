@@ -4,7 +4,7 @@ import torch
 from diffusers import AutoPipelineForText2Image
 
 DEFAULT_MODEL_ID = "runwayml/stable-diffusion-v1-5"
-MODEL_DIR = Path(r"D:\Ai_models\stable-diffusion-v1-5")
+MODEL_DIR = Path(r"D:\Ai_models\SD15")
 DEFAULT_STEPS = 30
 DEFAULT_GUIDANCE = 7.0
 
