@@ -1,88 +1,113 @@
-import os
 from pathlib import Path
-
-MODEL_DIR = Path(os.environ.get("IMAGE_STUDIO_MODEL_DIR", r"D:\AI_Models"))
-CACHE_DIR = MODEL_DIR / "hub"
-
-try:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-except OSError:
-    MODEL_DIR = Path.home() / "AI_Models"
-    CACHE_DIR = MODEL_DIR / "hub"
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-os.environ["HF_HOME"] = str(MODEL_DIR)
-os.environ["HF_HUB_CACHE"] = str(CACHE_DIR)
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import torch
 from diffusers import AutoPipelineForText2Image
 
-DEFAULT_MODEL_ID = "stabilityai/sd-turbo"
-DEFAULT_STEPS = 2
-DEFAULT_GUIDANCE = 0.0
+DEFAULT_MODEL_ID = "runwayml/stable-diffusion-v1-5"
+MODEL_DIR = Path(r"D:\Ai_models\stable-diffusion-v1-5")
+DEFAULT_STEPS = 30
+DEFAULT_GUIDANCE = 7.0
 
 
 class ImageGenerator:
     def __init__(self, model_id=DEFAULT_MODEL_ID):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_id = model_id
+        self.model_source = self._resolve_model_source(model_id)
 
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            self.dtype = torch.float16
-        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-            self.device = "mps"
-            self.dtype = torch.float32
+        if self.device == "cuda":
+            dtype = torch.float16
         else:
-            self.device = "cpu"
-            self.dtype = torch.float32
+            dtype = torch.float32
 
-        self.pipe = self._load_pipeline()
-        self.pipe.to(self.device)
-
-        if self.device in ("cpu", "mps"):
-            self.pipe.enable_attention_slicing()
-
-    def _load_pipeline(self):
-        common_kwargs = {
-            "torch_dtype": self.dtype,
-            "cache_dir": str(CACHE_DIR),
-            "low_cpu_mem_usage": True,
+        load_kwargs = {
+            "torch_dtype": dtype,
+            "use_safetensors": True,
         }
 
-        try:
-            return AutoPipelineForText2Image.from_pretrained(
-                self.model_id,
-                safety_checker=None,
-                requires_safety_checker=False,
-                **common_kwargs,
-            )
-        except TypeError:
-            return AutoPipelineForText2Image.from_pretrained(
-                self.model_id,
-                **common_kwargs,
-            )
+        if self.model_source == model_id:
+            load_kwargs["cache_dir"] = str(MODEL_DIR)
+        elif self._has_variant_files(MODEL_DIR):
+            load_kwargs["variant"] = "fp16"
 
+        self.pipe = AutoPipelineForText2Image.from_pretrained(
+            self.model_source,
+            **load_kwargs,
+        )
+
+        self._configure_memory()
+
+    @staticmethod
+    def _resolve_model_source(model_id):
+        local_dir = Path(model_id)
+        if local_dir.is_dir():
+            return str(local_dir)
+
+        if MODEL_DIR.is_dir() and (MODEL_DIR / "model_index.json").exists():
+            return str(MODEL_DIR)
+
+        return model_id
+
+    @staticmethod
+    def _has_variant_files(path):
+        return any(path.glob("*fp16*"))
+
+    def _configure_memory(self):
+        if self.device == "cuda":
+            if hasattr(self.pipe, "enable_vae_slicing"):
+                self.pipe.enable_vae_slicing()
+
+            if hasattr(self.pipe, "enable_vae_tiling"):
+                self.pipe.enable_vae_tiling()
+
+            try:
+                self.pipe.enable_model_cpu_offload()
+            except Exception:
+                self.pipe = self.pipe.to("cuda")
+        else:
+            self.pipe = self.pipe.to("cpu")
+
+    @torch.inference_mode()
     def generate(
         self,
         prompt,
-        negative_prompt="",
+        negative_prompt=None,
+        width=1024,
+        height=1024,
         steps=DEFAULT_STEPS,
         guidance_scale=DEFAULT_GUIDANCE,
         seed=None,
     ):
+        if not prompt or not prompt.strip():
+            raise ValueError("Prompt cannot be empty.")
+
+        width = max(64, int(width))
+        height = max(64, int(height))
+        steps = max(1, int(steps))
+        guidance_scale = max(0.0, float(guidance_scale))
+
+        generator = None
         if seed is not None:
-            torch.manual_seed(int(seed))
+            seed = int(seed)
+            generator = torch.Generator(device=self.device).manual_seed(seed)
 
-        kwargs = {
-            "prompt": prompt,
-            "num_inference_steps": int(steps),
-            "guidance_scale": float(guidance_scale),
-        }
+        result = self.pipe(
+            prompt=prompt.strip(),
+            negative_prompt=(negative_prompt.strip() if negative_prompt else None),
+            width=width,
+            height=height,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            generator=generator,
+        )
 
-        if negative_prompt:
-            kwargs["negative_prompt"] = negative_prompt
-
-        result = self.pipe(**kwargs)
         return result.images[0]
+
+    def save(self, image, path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(path)
+
+    def clear_cuda(self):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

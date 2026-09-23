@@ -18,7 +18,7 @@ class ModelLoader(QThread):
             engine = ImageGenerator(self.model_id)
             self.loaded.emit(engine, engine.device)
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
 class GenerationWorker(QThread):
@@ -30,6 +30,8 @@ class GenerationWorker(QThread):
         engine,
         prompt,
         negative_prompt,
+        width,
+        height,
         steps,
         guidance_scale,
         seed,
@@ -39,6 +41,8 @@ class GenerationWorker(QThread):
         self.engine = engine
         self.prompt = prompt
         self.negative_prompt = negative_prompt
+        self.width = width
+        self.height = height
         self.steps = steps
         self.guidance_scale = guidance_scale
         self.seed = seed
@@ -46,19 +50,19 @@ class GenerationWorker(QThread):
     def run(self):
         try:
             seed = self.seed
-
             if seed is None:
-                seed = random.randint(1, 2147483647)
+                seed = random.randint(1, 2_147_483_647)
 
             image = self.engine.generate(
                 prompt=self.prompt,
                 negative_prompt=self.negative_prompt,
+                width=self.width,
+                height=self.height,
                 steps=self.steps,
                 guidance_scale=self.guidance_scale,
                 seed=seed,
             )
 
             self.succeeded.emit(image, seed)
-
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
