@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QGridLayout,
@@ -30,6 +31,7 @@ from generator import (
     MODEL_DIR,
 )
 from workers import GenerationWorker, ModelLoader
+
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "outputs"
@@ -80,12 +82,23 @@ class ImageView(QLabel):
             Qt.SmoothTransformation,
         )
 
-        x = available.x() + max(0, (available.width() - scaled.width()) // 2)
-        y = available.y() + max(0, (available.height() - scaled.height()) // 2)
+        x = available.x() + max(
+            0,
+            (available.width() - scaled.width()) // 2,
+        )
+        y = available.y() + max(
+            0,
+            (available.height() - scaled.height()) // 2,
+        )
+
         target = QRect(x, y, scaled.width(), scaled.height())
 
         path = QPainterPath()
-        path.addRoundedRect(QRectF(target), self._radius, self._radius)
+        path.addRoundedRect(
+            QRectF(target),
+            self._radius,
+            self._radius,
+        )
 
         painter.setClipPath(path)
         painter.drawPixmap(target, scaled)
@@ -124,17 +137,22 @@ class MainWindow(QMainWindow):
         main.setSpacing(18)
 
         header = QHBoxLayout()
+
         title_box = QVBoxLayout()
         title_box.setSpacing(3)
 
         title = QLabel("Nova Image AI")
         title.setObjectName("appTitle")
 
-        subtitle = QLabel("Local text-to-image generation powered by PyTorch + Diffusers")
+        subtitle = QLabel(
+            "Local text-to-image generation powered by "
+            "PyTorch + Diffusers"
+        )
         subtitle.setObjectName("appSubtitle")
 
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
+
         header.addLayout(title_box)
         header.addStretch()
 
@@ -153,6 +171,7 @@ class MainWindow(QMainWindow):
 
         preview_card = QFrame()
         preview_card.setObjectName("card")
+
         preview_layout = QVBoxLayout(preview_card)
         preview_layout.setContentsMargins(18, 18, 18, 18)
         preview_layout.setSpacing(10)
@@ -165,6 +184,7 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.image_view, 1)
 
         buttons = QHBoxLayout()
+
         self.save_button = QPushButton("Save Image")
         self.save_button.setObjectName("secondaryButton")
         self.save_button.clicked.connect(self.save_image)
@@ -172,17 +192,21 @@ class MainWindow(QMainWindow):
 
         self.clear_button = QPushButton("Clear")
         self.clear_button.setObjectName("secondaryButton")
-        self.clear_button.clicked.connect(self.image_view.clear_image)
+        self.clear_button.clicked.connect(
+            self.image_view.clear_image
+        )
 
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.clear_button)
         buttons.addStretch()
+
         preview_layout.addLayout(buttons)
 
         content.addWidget(preview_card, 0, 0)
 
         controls_card = QFrame()
         controls_card.setObjectName("card")
+
         controls = QVBoxLayout(controls_card)
         controls.setContentsMargins(22, 22, 22, 22)
         controls.setSpacing(12)
@@ -190,6 +214,28 @@ class MainWindow(QMainWindow):
         prompt_label = QLabel("PROMPT")
         prompt_label.setObjectName("sectionLabel")
         controls.addWidget(prompt_label)
+
+        preset_row = QHBoxLayout()
+
+        preset_label = QLabel("Style")
+        preset_label.setObjectName("fieldLabel")
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems([
+            "Custom",
+            "Photorealistic",
+            "Cinematic",
+            "Digital Art",
+            "Anime",
+        ])
+        self.preset_combo.currentTextChanged.connect(
+            self._apply_preset
+        )
+
+        preset_row.addWidget(preset_label)
+        preset_row.addWidget(self.preset_combo, 1)
+
+        controls.addLayout(preset_row)
 
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlaceholderText(
@@ -226,12 +272,12 @@ class MainWindow(QMainWindow):
         self.width_spin = QSpinBox()
         self.width_spin.setRange(256, 1536)
         self.width_spin.setSingleStep(64)
-        self.width_spin.setValue(1024)
+        self.width_spin.setValue(512)
 
         self.height_spin = QSpinBox()
         self.height_spin.setRange(256, 1536)
         self.height_spin.setSingleStep(64)
-        self.height_spin.setValue(1024)
+        self.height_spin.setValue(512)
 
         self.steps_spin = QSpinBox()
         self.steps_spin.setRange(1, 100)
@@ -255,7 +301,15 @@ class MainWindow(QMainWindow):
 
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
+
         controls.addLayout(grid)
+
+        settings_hint = QLabel(
+            "SD 1.5: 512×512 • 25–35 steps • Guidance 6–8"
+        )
+        settings_hint.setObjectName("footnoteLabel")
+        settings_hint.setWordWrap(True)
+        controls.addWidget(settings_hint)
 
         controls.addStretch()
 
@@ -263,6 +317,7 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setRange(0, 0)
         self.progress.hide()
+
         controls.addWidget(self.progress)
 
         self.generate_button = QPushButton("Generate Image")
@@ -270,53 +325,121 @@ class MainWindow(QMainWindow):
         self.generate_button.setMinimumHeight(48)
         self.generate_button.clicked.connect(self.generate)
         self.generate_button.setEnabled(False)
+
         controls.addWidget(self.generate_button)
 
-        self.status_label = QLabel("Preparing the image model…")
+        self.status_label = QLabel(
+            "Preparing the image model…"
+        )
         self.status_label.setObjectName("statusLabel")
         self.status_label.setWordWrap(True)
+
         controls.addWidget(self.status_label)
 
         self.error_label = QLabel("")
         self.error_label.setObjectName("errorLabel")
         self.error_label.setWordWrap(True)
+
         controls.addWidget(self.error_label)
 
         content.addWidget(controls_card, 0, 1)
         main.addLayout(content, 1)
 
         footnote = QLabel(
-            f"Model: SDXL Base 1.0  •  Cache: {MODEL_DIR}"
+            f"Model: Stable Diffusion 1.5  •  Local: {MODEL_DIR}"
         )
         footnote.setObjectName("footnoteLabel")
         main.addWidget(footnote)
 
+    def _apply_preset(self, preset):
+        presets = {
+            "Custom": "",
+            "Photorealistic": (
+                "photorealistic, highly detailed, natural lighting, "
+                "realistic textures, sharp focus"
+            ),
+            "Cinematic": (
+                "cinematic composition, dramatic lighting, "
+                "volumetric light, film still, detailed atmosphere"
+            ),
+            "Digital Art": (
+                "high quality digital art, detailed illustration, "
+                "beautiful composition, polished artwork"
+            ),
+            "Anime": (
+                "anime style, detailed illustration, expressive lighting, "
+                "clean line art, vibrant colors"
+            ),
+        }
+
+        selected = presets.get(preset, "")
+
+        if not selected:
+            return
+
+        current = self.prompt_edit.toPlainText().strip()
+
+        if selected.lower() in current.lower():
+            return
+
+        if current:
+            self.prompt_edit.setPlainText(
+                f"{current}, {selected}"
+            )
+        else:
+            self.prompt_edit.setPlainText(selected)
+
     def _apply_theme(self):
         self.setStyleSheet(theme.qss())
-        theme.add_shadow(self.findChild(QFrame, "card"))
+        theme.add_shadow(
+            self.findChild(QFrame, "card")
+        )
 
         cards = self.findChildren(QFrame, "card")
+
         for card in cards:
             theme.add_shadow(card)
 
     def _start_model_loading(self):
-        self.loader = ModelLoader(DEFAULT_MODEL_ID, self)
-        self.loader.loaded.connect(self._model_loaded)
-        self.loader.failed.connect(self._model_failed)
+        self.loader = ModelLoader(
+            DEFAULT_MODEL_ID,
+            self,
+        )
+
+        self.loader.loaded.connect(
+            self._model_loaded
+        )
+
+        self.loader.failed.connect(
+            self._model_failed
+        )
+
         self.loader.start()
 
     def _model_loaded(self, engine, device):
         self.engine = engine
-        self.device_label.setText(f"Ready • {device.upper()}")
-        self.status_label.setText("Model loaded. Enter a prompt and generate.")
+
+        self.device_label.setText(
+            f"Ready • {device.upper()}"
+        )
+
+        self.status_label.setText(
+            "Model loaded. Enter a prompt and generate."
+        )
+
         self.generate_button.setEnabled(True)
         self.loader = None
 
     def _model_failed(self, message):
-        self.device_label.setText("Model failed to load")
-        self.status_label.setText(
-            "The model could not be loaded. Check the error below."
+        self.device_label.setText(
+            "Model failed to load"
         )
+
+        self.status_label.setText(
+            "The model could not be loaded. "
+            "Check the error below."
+        )
+
         self.error_label.setText(message)
         self.generate_button.setEnabled(False)
         self.loader = None
@@ -326,15 +449,21 @@ class MainWindow(QMainWindow):
             return
 
         prompt = self.prompt_edit.toPlainText().strip()
+
         if not prompt:
-            self.error_label.setText("Please enter a prompt.")
+            self.error_label.setText(
+                "Please enter a prompt."
+            )
             return
 
         self.error_label.clear()
         self.generate_button.setEnabled(False)
         self.save_button.setEnabled(False)
         self.progress.show()
-        self.status_label.setText("Generating image…")
+
+        self.status_label.setText(
+            "Generating image…"
+        )
 
         seed_value = self.seed_spin.value()
         seed = None if seed_value == 0 else seed_value
@@ -350,42 +479,78 @@ class MainWindow(QMainWindow):
             seed=seed,
             parent=self,
         )
-        self.worker.succeeded.connect(self._generation_succeeded)
-        self.worker.failed.connect(self._generation_failed)
-        self.worker.finished.connect(self._worker_finished)
+
+        self.worker.succeeded.connect(
+            self._generation_succeeded
+        )
+
+        self.worker.failed.connect(
+            self._generation_failed
+        )
+
+        self.worker.finished.connect(
+            self._worker_finished
+        )
+
         self.worker.start()
 
     def _generation_succeeded(self, image, seed):
         self.current_image = image
         self.current_seed = seed
 
-        image_path = OUTPUT_DIR / f"image_{datetime.now():%Y%m%d_%H%M%S}_{seed}.png"
-        self.engine.save(image, image_path)
+        image_path = (
+            OUTPUT_DIR
+            / f"image_{datetime.now():%Y%m%d_%H%M%S}_{seed}.png"
+        )
+
+        self.engine.save(
+            image,
+            image_path,
+        )
 
         rgba = image.convert("RGBA")
         data = rgba.tobytes("raw", "RGBA")
-        qimage = __import__("PySide6.QtGui", fromlist=["QImage"]).QImage(
+
+        qimage = __import__(
+            "PySide6.QtGui",
+            fromlist=["QImage"],
+        ).QImage(
             data,
             rgba.width,
             rgba.height,
             rgba.width * 4,
-            __import__("PySide6.QtGui", fromlist=["QImage"]).QImage.Format_RGBA8888,
+            __import__(
+                "PySide6.QtGui",
+                fromlist=["QImage"],
+            ).QImage.Format_RGBA8888,
         ).copy()
+
         pixmap = QPixmap.fromImage(qimage)
 
-        self.image_view.set_source_pixmap(pixmap)
+        self.image_view.set_source_pixmap(
+            pixmap
+        )
+
         self.save_button.setEnabled(True)
+
         self.status_label.setText(
-            f"Generated successfully • seed {seed} • saved to {image_path.name}"
+            f"Generated successfully • seed {seed} "
+            f"• saved to {image_path.name}"
         )
 
     def _generation_failed(self, message):
         self.error_label.setText(message)
-        self.status_label.setText("Generation failed.")
+        self.status_label.setText(
+            "Generation failed."
+        )
 
     def _worker_finished(self):
         self.progress.hide()
-        self.generate_button.setEnabled(self.engine is not None)
+
+        self.generate_button.setEnabled(
+            self.engine is not None
+        )
+
         if self.worker is not None:
             self.worker.deleteLater()
             self.worker = None
@@ -400,15 +565,25 @@ class MainWindow(QMainWindow):
             str(OUTPUT_DIR / "generated.png"),
             "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg)",
         )
+
         if path:
             self.current_image.save(path)
-            self.status_label.setText(f"Saved: {Path(path).name}")
+
+            self.status_label.setText(
+                f"Saved: {Path(path).name}"
+            )
 
     def closeEvent(self, event):
-        if self.worker is not None and self.worker.isRunning():
+        if (
+            self.worker is not None
+            and self.worker.isRunning()
+        ):
             self.worker.wait(3000)
 
-        if self.loader is not None and self.loader.isRunning():
+        if (
+            self.loader is not None
+            and self.loader.isRunning()
+        ):
             self.loader.wait(3000)
 
         if self.engine is not None:
@@ -419,8 +594,10 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+
     window = MainWindow()
     window.show()
+
     sys.exit(app.exec())
 
 
